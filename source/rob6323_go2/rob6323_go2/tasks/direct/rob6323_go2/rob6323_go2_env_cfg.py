@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG
+from isaaclab.actuators import ImplicitActuatorCfg
 
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
@@ -25,7 +26,8 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     # - spaces definition
     action_scale = 0.25
     action_space = 12
-    observation_space = 48
+    # base 48 obs + 4 gait clock signals
+    observation_space = 52
     state_space = 0
     debug_vis = True
 
@@ -56,6 +58,14 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     )
     # robot(s)
     robot_cfg: ArticulationCfg = UNITREE_GO2_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+    # Override implicit actuators so we can apply our own torque-level PD control
+    robot_cfg.actuators["base_legs"] = ImplicitActuatorCfg(
+        joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+        effort_limit=23.5,
+        velocity_limit=30.0,
+        stiffness=0.0,  # disable built-in P-gain
+        damping=0.0,    # disable built-in D-gain
+    )
 
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
@@ -79,3 +89,19 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     # reward scales
     lin_vel_reward_scale = 1.0
     yaw_rate_reward_scale = 0.5
+    action_rate_reward_scale = -0.1
+    raibert_heuristic_reward_scale = -10.0
+    feet_clearance_reward_scale = -30.0
+    tracking_contacts_shaped_force_reward_scale = 4.0
+    orient_reward_scale = -5.0
+    lin_vel_z_reward_scale = -0.02
+    dof_vel_reward_scale = -0.0001
+    ang_vel_xy_reward_scale = -0.001
+
+    # custom PD controller parameters
+    Kp = 20.0
+    Kd = 0.5
+    torque_limits = 100.0
+
+    # termination thresholds
+    base_height_min = 0.20
