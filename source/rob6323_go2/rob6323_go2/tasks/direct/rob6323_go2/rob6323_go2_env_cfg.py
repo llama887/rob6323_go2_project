@@ -61,7 +61,7 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     # Override implicit actuators so we can apply our own torque-level PD control
     robot_cfg.actuators["base_legs"] = ImplicitActuatorCfg(
         joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
-        effort_limit=23.5,
+        effort_limit=100.0,  # align with torque_limits so custom PD can fully actuate
         velocity_limit=30.0,
         stiffness=0.0,  # disable built-in P-gain
         damping=0.0,    # disable built-in D-gain

@@ -110,6 +110,8 @@ class Rob6323Go2Env(DirectRLEnv):
         light_cfg.func("/World/Light", light_cfg)
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
+        # Advance gait clock once per sim step so observations and rewards stay aligned.
+        self._step_contact_targets()
         self._actions = actions.clone()
         # desired joint positions (policy outputs scaled around default pose)
         self.desired_joint_pos = self.cfg.action_scale * self._actions + self.robot.data.default_joint_pos
@@ -124,8 +126,6 @@ class Rob6323Go2Env(DirectRLEnv):
         self.robot.set_joint_effort_target(torques)
 
     def _get_observations(self) -> dict:
-        # Update gait clock each step so obs includes fresh phases
-        self._step_contact_targets()
         self._previous_actions = self._actions.clone()
         obs = torch.cat(
             [
