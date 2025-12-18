@@ -95,6 +95,7 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     lin_vel_z_reward_scale = -0.02
     dof_vel_reward_scale = -0.0001
     ang_vel_xy_reward_scale = -0.001
+    torque_penalty_reward_scale = -0.0001
 
     # PD control gains
     Kp = 15.0

@@ -57,6 +57,7 @@ class Rob6323Go2Env(DirectRLEnv):
         self.Kd = torch.tensor([cfg.Kd] * 12, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
         self.motor_offsets = torch.zeros(self.num_envs, 12, device=self.device)
         self.torque_limits = cfg.torque_limits
+        self._last_torques = torch.zeros(self.num_envs, 12, device=self.device)
 
         # Get specific body indices
         self._feet_ids = []
@@ -92,6 +93,7 @@ class Rob6323Go2Env(DirectRLEnv):
                 "ang_vel_xy",
                 "feet_clearance",
                 "tracking_contacts_shaped_force",
+                "torque_penalty",
             ]
         }
         # Get specific body indices
@@ -135,6 +137,7 @@ class Rob6323Go2Env(DirectRLEnv):
             -self.torque_limits,
             self.torque_limits,
         )
+        self._last_torques = torques
         self.robot.set_joint_effort_target(torques)
 
     def _get_observations(self) -> dict:
@@ -192,6 +195,7 @@ class Rob6323Go2Env(DirectRLEnv):
         rew_lin_vel_z = torch.square(self.robot.data.root_lin_vel_b[:, 2])
         rew_dof_vel = torch.sum(torch.square(self.robot.data.joint_vel), dim=1)
         rew_ang_vel_xy = torch.sum(torch.square(self.robot.data.root_ang_vel_b[:, :2]), dim=1)
+        rew_torque = torch.sum(torch.square(self._last_torques), dim=1)
 
         rewards = {
             "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.lin_vel_reward_scale,
@@ -205,6 +209,7 @@ class Rob6323Go2Env(DirectRLEnv):
             "feet_clearance": rew_feet_clearance * self.cfg.feet_clearance_reward_scale,
             "tracking_contacts_shaped_force": rew_tracking_contacts_shaped_force
             * self.cfg.tracking_contacts_shaped_force_reward_scale,
+            "torque_penalty": rew_torque * self.cfg.torque_penalty_reward_scale,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
