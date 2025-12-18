@@ -35,11 +35,15 @@ class Rob6323Go2Env(DirectRLEnv):
         self._previous_actions = torch.zeros(
             self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device
         )
+        # smoothed actions for low-pass filtering
+        self._smoothed_actions = torch.zeros(
+            self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device
+        )
         # action history buffer: shape (num_envs, action_dim, history_length=3)
         self.last_actions = torch.zeros(
             self.num_envs,
             gym.spaces.flatdim(self.single_action_space),
-            3,
+            5,
             dtype=torch.float,
             device=self.device,
             requires_grad=False,
@@ -118,8 +122,10 @@ class Rob6323Go2Env(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self._actions = actions.clone()
-        # Compute desired joint positions from policy actions
-        self.desired_joint_pos = self.cfg.action_scale * self._actions + self.robot.data.default_joint_pos
+        # low-pass filter to smooth jitter while retaining amplitude
+        self._smoothed_actions = 0.6 * self._smoothed_actions + 0.4 * self._actions
+        # Compute desired joint positions from smoothed policy actions
+        self.desired_joint_pos = self.cfg.action_scale * self._smoothed_actions + self.robot.data.default_joint_pos
 
     def _apply_action(self) -> None:
         # Compute PD torques and clip to limits
@@ -226,11 +232,17 @@ class Rob6323Go2Env(DirectRLEnv):
         self._actions[env_ids] = 0.0
         self._previous_actions[env_ids] = 0.0
         self.last_actions[env_ids] = 0.0
+        self._smoothed_actions[env_ids] = 0.0
         self.gait_indices[env_ids] = 0.0
         self.clock_inputs[env_ids] = 0.0
         self.desired_contact_states[env_ids] = 0.0
         # Sample new commands
         self._commands[env_ids] = torch.zeros_like(self._commands[env_ids]).uniform_(-1.0, 1.0)
+        # bias forward speed higher to encourage longer strides
+        self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0]).uniform_(0.8, 1.2)
+        # limit lateral/yaw for stability while learning longer steps
+        self._commands[env_ids, 1] = torch.zeros_like(self._commands[env_ids, 1]).uniform_(-0.2, 0.2)
+        self._commands[env_ids, 2] = torch.zeros_like(self._commands[env_ids, 2]).uniform_(-0.3, 0.3)
         # Reset robot state
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         joint_vel = self.robot.data.default_joint_vel[env_ids]
@@ -309,11 +321,11 @@ class Rob6323Go2Env(DirectRLEnv):
         return self.robot.data.body_pos_w[:, self._feet_ids]
 
     def _step_contact_targets(self):
-        frequencies = 3.0
+        frequencies = 1.8
         phases = 0.5
         offsets = 0.0
         bounds = 0.0
-        durations = 0.5 * torch.ones((self.num_envs,), dtype=torch.float32, device=self.device)
+        durations = 0.6 * torch.ones((self.num_envs,), dtype=torch.float32, device=self.device)
         self.gait_indices = torch.remainder(self.gait_indices + self.step_dt * frequencies, 1.0)
 
         foot_indices = [
@@ -416,7 +428,7 @@ class Rob6323Go2Env(DirectRLEnv):
     def _reward_feet_clearance(self):
         foot_heights = self.foot_positions_w[:, :, 2]
         swing_mask = self.desired_contact_states < 0.5
-        target_height = 0.05  # nominal clearance target (m)
+        target_height = 0.08  # increased nominal clearance target (m)
         err_clearance = torch.zeros(self.num_envs, device=self.device)
         if swing_mask.any():
             err_clearance = torch.sum(

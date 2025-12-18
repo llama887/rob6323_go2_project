@@ -24,7 +24,7 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     decimation = 4
     episode_length_s = 20.0
     # - spaces definition
-    action_scale = 0.25
+    action_scale = 0.35
     action_space = 12
     observation_space = 48 + 4
     state_space = 0
@@ -87,17 +87,17 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     # reward scales
     lin_vel_reward_scale = 1.0
     yaw_rate_reward_scale = 0.5
-    action_rate_reward_scale = -0.1
+    action_rate_reward_scale = -0.05
     raibert_heuristic_reward_scale = -10.0
     feet_clearance_reward_scale = -30.0
-    tracking_contacts_shaped_force_reward_scale = 4.0
+    tracking_contacts_shaped_force_reward_scale = 2.0
     orient_reward_scale = -5.0
     lin_vel_z_reward_scale = -0.02
     dof_vel_reward_scale = -0.0001
     ang_vel_xy_reward_scale = -0.001
 
     # PD control gains
-    Kp = 20.0
-    Kd = 0.5
-    torque_limits = 100.0
+    Kp = 15.0
+    Kd = 0.8
+    torque_limits = 40.0
     base_height_min = 0.20
