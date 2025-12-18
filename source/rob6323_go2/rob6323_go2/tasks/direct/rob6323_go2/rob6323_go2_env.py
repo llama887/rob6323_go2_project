@@ -86,6 +86,8 @@ class Rob6323Go2Env(DirectRLEnv):
                 "lin_vel_z",
                 "dof_vel",
                 "ang_vel_xy",
+                "feet_clearance",
+                "tracking_contacts_shaped_force",
             ]
         }
         # Get specific body indices
@@ -175,6 +177,8 @@ class Rob6323Go2Env(DirectRLEnv):
         self.last_actions[:, :, 0] = self._actions[:]
 
         rew_raibert_heuristic = self._reward_raibert_heuristic()
+        rew_feet_clearance = self._reward_feet_clearance()
+        rew_tracking_contacts_shaped_force = self._reward_tracking_contacts_shaped_force()
 
         # Additional shaping rewards
         rew_orient = torch.sum(torch.square(self.robot.data.projected_gravity_b[:, :2]), dim=1)
@@ -191,6 +195,9 @@ class Rob6323Go2Env(DirectRLEnv):
             "lin_vel_z": rew_lin_vel_z * self.cfg.lin_vel_z_reward_scale,
             "dof_vel": rew_dof_vel * self.cfg.dof_vel_reward_scale,
             "ang_vel_xy": rew_ang_vel_xy * self.cfg.ang_vel_xy_reward_scale,
+            "feet_clearance": rew_feet_clearance * self.cfg.feet_clearance_reward_scale,
+            "tracking_contacts_shaped_force": rew_tracking_contacts_shaped_force
+            * self.cfg.tracking_contacts_shaped_force_reward_scale,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
@@ -405,3 +412,26 @@ class Rob6323Go2Env(DirectRLEnv):
         reward = torch.sum(torch.square(err_raibert_heuristic), dim=(1, 2))
 
         return reward
+
+    def _reward_feet_clearance(self):
+        foot_heights = self.foot_positions_w[:, :, 2]
+        swing_mask = self.desired_contact_states < 0.5
+        target_height = 0.05  # nominal clearance target (m)
+        err_clearance = torch.zeros(self.num_envs, device=self.device)
+        if swing_mask.any():
+            err_clearance = torch.sum(
+                torch.square(torch.clamp(target_height - foot_heights, min=0.0) * swing_mask), dim=1
+            )
+        return err_clearance
+
+    def _reward_tracking_contacts_shaped_force(self):
+        # forces for each foot from contact sensor
+        contact_forces = self._contact_sensor.data.net_forces_w[:, self._feet_ids_sensor]
+        force_magnitudes = torch.linalg.norm(contact_forces, dim=-1)
+        # desired_contact_states in [0,1]; penalize mismatch
+        desired = self.desired_contact_states
+        # encourage contact when desired=1, discourage when desired=0
+        # use squared difference between normalized force (clipped) and desired
+        normalized_force = torch.clamp(force_magnitudes / 200.0, 0.0, 1.0)
+        err = torch.sum(torch.square(normalized_force - desired), dim=1)
+        return err
