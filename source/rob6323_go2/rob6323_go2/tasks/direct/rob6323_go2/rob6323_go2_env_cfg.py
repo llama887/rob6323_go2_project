@@ -103,3 +103,11 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     Kd = 0.8
     torque_limits = 40.0
     base_height_min = 0.20
+
+    # Actuator friction model (stiction + viscous)
+    friction_enabled = True
+    friction_randomize = True
+    friction_static_nominal = 1.0  # Fs
+    friction_viscous_nominal = 0.1  # mu_v
+    friction_static_range = (0.0, 2.5)  # Fs ~ U(0, 2.5)
+    friction_viscous_range = (0.0, 0.3)  # mu_v ~ U(0, 0.3)
