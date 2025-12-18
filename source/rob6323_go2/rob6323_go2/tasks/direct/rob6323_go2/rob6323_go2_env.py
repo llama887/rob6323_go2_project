@@ -56,11 +56,6 @@ class Rob6323Go2Env(DirectRLEnv):
                 "tracking_contacts_shaped_force",
             ]
         }
-        # PD control parameters (torque-level) pre-expanded for all envs
-        self.Kp = torch.tensor([cfg.Kp] * 12, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
-        self.Kd = torch.tensor([cfg.Kd] * 12, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
-        self.torque_limits = cfg.torque_limits
-        self.motor_offsets = torch.zeros(self.num_envs, 12, device=self.device)
 
         # Get specific body indices
         self._base_id, _ = self._contact_sensor.find_bodies("base")
@@ -114,16 +109,11 @@ class Rob6323Go2Env(DirectRLEnv):
         self._step_contact_targets()
         self._actions = actions.clone()
         # desired joint positions (policy outputs scaled around default pose)
-        self.desired_joint_pos = self.cfg.action_scale * self._actions + self.robot.data.default_joint_pos
+        self._processed_actions = self.cfg.action_scale * self._actions + self.robot.data.default_joint_pos
 
     def _apply_action(self) -> None:
-        # Torque-level PD control: tau = Kp(q_des - q) - Kd * qd
-        torques = torch.clip(
-            self.Kp * (self.desired_joint_pos - self.robot.data.joint_pos) - self.Kd * self.robot.data.joint_vel,
-            -self.torque_limits,
-            self.torque_limits,
-        )
-        self.robot.set_joint_effort_target(torques)
+        # Use articulation's internal position controllers for stability
+        self.robot.set_joint_position_target(self._processed_actions)
 
     def _get_observations(self) -> dict:
         self._previous_actions = self._actions.clone()
@@ -138,7 +128,6 @@ class Rob6323Go2Env(DirectRLEnv):
                     self.robot.data.joint_pos - self.robot.data.default_joint_pos,
                     self.robot.data.joint_vel,
                     self._actions,
-                    self.clock_inputs,
                 )
                 if tensor is not None
             ],
@@ -213,9 +202,7 @@ class Rob6323Go2Env(DirectRLEnv):
         net_contact_forces = self._contact_sensor.data.net_forces_w_history
         cstr_termination_contacts = torch.any(torch.max(torch.norm(net_contact_forces[:, :, self._base_id], dim=-1), dim=1)[0] > 1.0, dim=1)
         cstr_upsidedown = self.robot.data.projected_gravity_b[:, 2] > 0
-        base_height = self.robot.data.root_pos_w[:, 2]
-        cstr_base_height_min = base_height < self.cfg.base_height_min
-        died = cstr_termination_contacts | cstr_upsidedown | cstr_base_height_min
+        died = cstr_termination_contacts | cstr_upsidedown
         return died, time_out
 
     def _reset_idx(self, env_ids: Sequence[int] | None):
