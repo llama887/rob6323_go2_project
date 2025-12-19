@@ -169,3 +169,4 @@ Students should only edit README.md below this line.
 - Additional locomotion tuning beyond the tutorial: higher action scale, smoothed actions, slower 1.8 Hz gait with longer swing, higher (~8 cm) foot clearance, retuned PD gains/torque limits, softened action-rate/contact penalties, and forward-biased command sampling for longer, smoother steps
 - small negative coefficient on squared joint torques, nudges the policy toward lower effort, reducing actuator load
 - reward velocity component along command direction
+- added smoothness/stability penalties: vertical COM acceleration (delta), roll/pitch oscillation rate proxy (delta projected gravity XY), and joint-velocity jerk (second difference)

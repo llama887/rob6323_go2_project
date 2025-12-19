@@ -58,6 +58,11 @@ class Rob6323Go2Env(DirectRLEnv):
         self.motor_offsets = torch.zeros(self.num_envs, 12, device=self.device)
         self.torque_limits = cfg.torque_limits
         self._last_torques = torch.zeros(self.num_envs, 12, device=self.device)
+        # buffers for smoothness/oscillation penalties
+        self._prev_root_lin_vel_z = torch.zeros(self.num_envs, device=self.device)
+        self._prev_projected_gravity_xy = torch.zeros(self.num_envs, 2, device=self.device)
+        self._prev_joint_vel = torch.zeros(self.num_envs, 12, device=self.device)
+        self._prev_prev_joint_vel = torch.zeros(self.num_envs, 12, device=self.device)
         # Actuator friction parameters (stiction + viscous)
         self.friction_enabled = cfg.friction_enabled
         self.friction_randomize = cfg.friction_randomize
@@ -107,8 +112,11 @@ class Rob6323Go2Env(DirectRLEnv):
                 "raibert_heuristic",
                 "orient",
                 "lin_vel_z",
+                "lin_acc_z",
                 "dof_vel",
                 "ang_vel_xy",
+                "roll_pitch_oscillation",
+                "joint_vel_jerk",
                 "feet_clearance",
                 "tracking_contacts_shaped_force",
                 "torque_penalty",
@@ -217,8 +225,15 @@ class Rob6323Go2Env(DirectRLEnv):
         # Additional shaping rewards
         rew_orient = torch.sum(torch.square(self.robot.data.projected_gravity_b[:, :2]), dim=1)
         rew_lin_vel_z = torch.square(self.robot.data.root_lin_vel_b[:, 2])
+        lin_acc_z = self.robot.data.root_lin_vel_b[:, 2] - self._prev_root_lin_vel_z
+        rew_lin_acc_z = torch.square(lin_acc_z)
         rew_dof_vel = torch.sum(torch.square(self.robot.data.joint_vel), dim=1)
         rew_ang_vel_xy = torch.sum(torch.square(self.robot.data.root_ang_vel_b[:, :2]), dim=1)
+        roll_pitch_rate = self.robot.data.projected_gravity_b[:, :2] - self._prev_projected_gravity_xy
+        rew_roll_pitch_oscillation = torch.sum(torch.square(roll_pitch_rate), dim=1)
+        joint_vel = self.robot.data.joint_vel
+        joint_vel_jerk = joint_vel - 2 * self._prev_joint_vel + self._prev_prev_joint_vel
+        rew_joint_vel_jerk = torch.sum(torch.square(joint_vel_jerk), dim=1)
         rew_torque = torch.sum(torch.square(self._last_torques), dim=1)
 
         # reward travel along the commanded planar velocity direction
@@ -240,8 +255,11 @@ class Rob6323Go2Env(DirectRLEnv):
             "raibert_heuristic": rew_raibert_heuristic * self.cfg.raibert_heuristic_reward_scale,
             "orient": rew_orient * self.cfg.orient_reward_scale,
             "lin_vel_z": rew_lin_vel_z * self.cfg.lin_vel_z_reward_scale,
+            "lin_acc_z": rew_lin_acc_z * self.cfg.lin_acc_z_reward_scale,
             "dof_vel": rew_dof_vel * self.cfg.dof_vel_reward_scale,
             "ang_vel_xy": rew_ang_vel_xy * self.cfg.ang_vel_xy_reward_scale,
+            "roll_pitch_oscillation": rew_roll_pitch_oscillation * self.cfg.roll_pitch_oscillation_reward_scale,
+            "joint_vel_jerk": rew_joint_vel_jerk * self.cfg.joint_vel_jerk_reward_scale,
             "feet_clearance": rew_feet_clearance * self.cfg.feet_clearance_reward_scale,
             "tracking_contacts_shaped_force": rew_tracking_contacts_shaped_force
             * self.cfg.tracking_contacts_shaped_force_reward_scale,
@@ -251,6 +269,11 @@ class Rob6323Go2Env(DirectRLEnv):
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
+        # update history buffers for derivative penalties
+        self._prev_root_lin_vel_z = self.robot.data.root_lin_vel_b[:, 2].clone()
+        self._prev_projected_gravity_xy = self.robot.data.projected_gravity_b[:, :2].clone()
+        self._prev_prev_joint_vel = self._prev_joint_vel.clone()
+        self._prev_joint_vel = joint_vel.clone()
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -304,6 +327,10 @@ class Rob6323Go2Env(DirectRLEnv):
         self.robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         self.robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+        self._prev_root_lin_vel_z[env_ids] = self.robot.data.root_lin_vel_b[env_ids, 2]
+        self._prev_projected_gravity_xy[env_ids] = self.robot.data.projected_gravity_b[env_ids, :2]
+        self._prev_joint_vel[env_ids] = self.robot.data.joint_vel[env_ids]
+        self._prev_prev_joint_vel[env_ids] = self.robot.data.joint_vel[env_ids]
         # Logging
         extras = dict()
         for key in self._episode_sums.keys():

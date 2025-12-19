@@ -94,8 +94,11 @@ class Rob6323Go2EnvCfg(DirectRLEnvCfg):
     tracking_contacts_shaped_force_reward_scale = 2.5
     orient_reward_scale = -6.0
     lin_vel_z_reward_scale = -0.023
+    lin_acc_z_reward_scale = -0.002
     dof_vel_reward_scale = -0.0001
     ang_vel_xy_reward_scale = -0.001
+    roll_pitch_oscillation_reward_scale = -0.01
+    joint_vel_jerk_reward_scale = -0.0001
     torque_penalty_reward_scale = -0.0001
 
     # PD control gains
