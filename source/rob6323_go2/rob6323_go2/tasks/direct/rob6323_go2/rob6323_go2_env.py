@@ -58,6 +58,23 @@ class Rob6323Go2Env(DirectRLEnv):
         self.motor_offsets = torch.zeros(self.num_envs, 12, device=self.device)
         self.torque_limits = cfg.torque_limits
         self._last_torques = torch.zeros(self.num_envs, 12, device=self.device)
+        # Actuator friction parameters (stiction + viscous)
+        self.friction_enabled = cfg.friction_enabled
+        self.friction_randomize = cfg.friction_randomize
+        self._friction_static = torch.full(
+            (self.num_envs, 12), cfg.friction_static_nominal, device=self.device, dtype=torch.float
+        )
+        self._friction_viscous = torch.full(
+            (self.num_envs, 12), cfg.friction_viscous_nominal, device=self.device, dtype=torch.float
+        )
+        self._friction_static_range = (
+            float(cfg.friction_static_range[0]),
+            float(cfg.friction_static_range[1]),
+        )
+        self._friction_viscous_range = (
+            float(cfg.friction_viscous_range[0]),
+            float(cfg.friction_viscous_range[1]),
+        )
 
         # Get specific body indices
         self._feet_ids = []
@@ -132,12 +149,18 @@ class Rob6323Go2Env(DirectRLEnv):
         self.desired_joint_pos = self.cfg.action_scale * self._smoothed_actions + self.robot.data.default_joint_pos
 
     def _apply_action(self) -> None:
-        # Compute PD torques and clip to limits
-        torques = torch.clip(
-            self.Kp * (self.desired_joint_pos - self.robot.data.joint_pos) - self.Kd * self.robot.data.joint_vel,
-            -self.torque_limits,
-            self.torque_limits,
-        )
+        # Compute PD torques
+        torques = self.Kp * (self.desired_joint_pos - self.robot.data.joint_pos) - self.Kd * self.robot.data.joint_vel
+
+        # Subtract actuator friction (stiction + viscous) before applying limits
+        if self.friction_enabled:
+            joint_vel = self.robot.data.joint_vel
+            tau_stiction = self._friction_static * torch.tanh(joint_vel / 0.1)
+            tau_viscous = self._friction_viscous * joint_vel
+            torques = torques - (tau_stiction + tau_viscous)
+
+        # Clip to torque limits and apply
+        torques = torch.clamp(torques, -self.torque_limits, self.torque_limits)
         self._last_torques = torques
         self.robot.set_joint_effort_target(torques)
 
@@ -262,6 +285,17 @@ class Rob6323Go2Env(DirectRLEnv):
         # limit lateral/yaw for stability while learning longer steps
         self._commands[env_ids, 1] = torch.zeros_like(self._commands[env_ids, 1]).uniform_(-0.2, 0.2)
         self._commands[env_ids, 2] = torch.zeros_like(self._commands[env_ids, 2]).uniform_(-0.3, 0.3)
+        # Sample actuator friction parameters per episode/environment
+        if self.friction_enabled:
+            if self.friction_randomize:
+                Fs = torch.empty((len(env_ids), 1), device=self.device).uniform_(*self._friction_static_range)
+                mu_v = torch.empty((len(env_ids), 1), device=self.device).uniform_(*self._friction_viscous_range)
+            else:
+                Fs = torch.full((len(env_ids), 1), self.cfg.friction_static_nominal, device=self.device)
+                mu_v = torch.full((len(env_ids), 1), self.cfg.friction_viscous_nominal, device=self.device)
+            # apply same coefficients to all actuated joints
+            self._friction_static[env_ids] = Fs.repeat(1, 12)
+            self._friction_viscous[env_ids] = mu_v.repeat(1, 12)
         # Reset robot state
         joint_pos = self.robot.data.default_joint_pos[env_ids]
         joint_vel = self.robot.data.default_joint_vel[env_ids]
